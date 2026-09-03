@@ -20,7 +20,8 @@ import {
 import {
   DEFAULT_FASTREAD_ALGORITHM,
   DEFAULT_FASTREAD_COMMON_WORDS,
-  decorateFastRead,
+  collectFastReadTextNodes,
+  findFastReadMatches,
   parseFastReadAlgorithm,
   withFastReadRestRatio,
 } from "./fastread";
@@ -105,12 +106,15 @@ class PaginationSession {
   private readonly viewportEl: HTMLElement;
   private readonly stageEl: HTMLElement;
   private readonly contentEl: HTMLElement;
+  private readonly fastReadOverlayEl: HTMLElement;
   private readonly previousButton: HTMLButtonElement;
   private readonly nextButton: HTMLButtonElement;
   private readonly scrubEl: HTMLElement;
   private readonly progressEl: HTMLElement;
   private readonly progressFillEl: HTMLElement;
   private readonly statusEl: HTMLElement;
+  private readonly optionsButtonEl: HTMLButtonElement;
+  private readonly optionsPanelEl: HTMLElement;
   private readonly cleanupCallbacks: Array<() => void> = [];
   private readonly resizeObserver: ResizeObserver;
   private readonly mutationObserver: MutationObserver;
@@ -118,6 +122,8 @@ class PaginationSession {
   private renderGeneration = 0;
   private measureTimer: number | null = null;
   private persistTimer: number | null = null;
+  private fastReadDrawTimer: number | null = null;
+  private fastReadDrawGeneration = 0;
   private pageStride = 1;
   private totalPages = 1;
   private currentPage = 0;
@@ -155,7 +161,10 @@ class PaginationSession {
     const content = document.createElement("div");
     content.className = "nmp-content markdown-rendered";
     stage.appendChild(content);
-    viewport.appendChild(stage);
+    const fastReadOverlay = document.createElement("div");
+    fastReadOverlay.className = "nmp-fastread-overlay";
+    fastReadOverlay.hidden = true;
+    viewport.append(stage, fastReadOverlay);
 
     const previousButton = document.createElement("button");
     previousButton.className = "nmp-nav-button nmp-previous nmp-ui";
@@ -184,19 +193,31 @@ class PaginationSession {
     const status = document.createElement("div");
     status.className = "nmp-status-text";
     status.textContent = "1 / 1 · 0%";
-    statusBar.append(scrub, status);
-    viewport.append(previousButton, nextButton, statusBar);
+    const optionsButton = document.createElement("button");
+    optionsButton.className = "nmp-options-button nmp-ui";
+    optionsButton.type = "button";
+    optionsButton.textContent = "Aa";
+    optionsButton.setAttribute("aria-label", "打开阅读插件面板");
+    optionsButton.setAttribute("aria-expanded", "false");
+    const optionsPanel = document.createElement("div");
+    optionsPanel.className = "nmp-options-panel nmp-ui";
+    optionsPanel.hidden = true;
+    statusBar.append(scrub, status, optionsButton);
+    viewport.append(previousButton, nextButton, statusBar, optionsPanel);
     readingEl.appendChild(viewport);
 
     this.viewportEl = viewport;
     this.stageEl = stage;
     this.contentEl = content;
+    this.fastReadOverlayEl = fastReadOverlay;
     this.previousButton = previousButton;
     this.nextButton = nextButton;
     this.scrubEl = scrub;
     this.progressEl = progress;
     this.progressFillEl = progressFill;
     this.statusEl = status;
+    this.optionsButtonEl = optionsButton;
+    this.optionsPanelEl = optionsPanel;
 
     this.containerEl.classList.add("nmp-active");
     this.applySettings();
@@ -208,6 +229,13 @@ class PaginationSession {
     this.listen(nextButton, "click", (event) => {
       event.stopPropagation();
       this.next();
+    });
+    this.listen(optionsButton, "click", (event) => {
+      event.stopPropagation();
+      const open = this.optionsPanelEl.hidden;
+      this.optionsPanelEl.hidden = !open;
+      this.optionsButtonEl.setAttribute("aria-expanded", String(open));
+      if (open) this.renderOptionsPanel();
     });
     this.listen(viewport, "wheel", (event) => this.onWheel(event as WheelEvent), { passive: false });
     this.listen(viewport, "click", (event) => this.onViewportClick(event as MouseEvent));
@@ -239,6 +267,11 @@ class PaginationSession {
     void this.renderDocument(this.currentFraction());
   }
 
+  refreshFastRead(): void {
+    this.applySettings();
+    this.scheduleFastReadOverlay(0);
+  }
+
   private async renderDocument(position = this.savedFraction()): Promise<void> {
     const file = this.view.file;
     if (!file || this.destroyed) return;
@@ -261,6 +294,7 @@ class PaginationSession {
     const renderChild = new Component();
     this.plugin.addChild(renderChild);
     this.renderChild = renderChild;
+    this.clearFastReadOverlay();
     this.contentEl.replaceChildren();
 
     const cache = this.plugin.app.metadataCache.getFileCache(file);
@@ -280,14 +314,7 @@ class PaginationSession {
       this.contentEl.prepend(title);
     }
 
-    const decoratedWords = this.plugin.settings.fastReadEnabled
-      ? decorateFastRead(this.contentEl, {
-        algorithm: this.plugin.settings.fastReadAlgorithm,
-        excludeCommonWords: this.plugin.settings.fastReadExcludeCommonWords,
-        commonWords: this.plugin.settings.fastReadCommonWords,
-      })
-      : 0;
-    this.contentEl.dataset.fastreadWords = String(decoratedWords);
+    this.contentEl.dataset.fastreadWords = "0";
 
     this.contentEl.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
       if (!image.complete) this.listen(image, "load", () => this.scheduleMeasure(), { once: true });
@@ -320,9 +347,140 @@ class PaginationSession {
     this.contentEl.style.setProperty("--nmp-font-size", `${settings.fontSize}em`);
     this.contentEl.style.setProperty("--nmp-line-height", String(settings.lineHeight));
     this.contentEl.style.setProperty("--nmp-column-gap", `${settings.columnGap}em`);
-    this.contentEl.style.setProperty("--nmp-fastread-weight", String(settings.fastReadFontWeight));
-    this.contentEl.style.setProperty("--nmp-fastread-rest-opacity", settings.fastReadDimRest ? "0.7" : "1");
     this.contentEl.style.transition = settings.animate ? "transform 0.2s ease" : "none";
+  }
+
+  private renderOptionsPanel(): void {
+    const panel = this.optionsPanelEl;
+    const settings = this.plugin.settings;
+    panel.replaceChildren();
+
+    const header = document.createElement("div");
+    header.className = "nmp-options-header";
+    const title = document.createElement("strong");
+    title.textContent = "阅读插件面板";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "nmp-options-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "关闭阅读插件面板");
+    close.addEventListener("click", () => {
+      panel.hidden = true;
+      this.optionsButtonEl.setAttribute("aria-expanded", "false");
+    });
+    header.append(title, close);
+    panel.appendChild(header);
+
+    const heading = (text: string): void => {
+      const element = document.createElement("div");
+      element.className = "nmp-options-heading";
+      element.textContent = text;
+      panel.appendChild(element);
+    };
+    const row = (labelText: string, control: HTMLElement): void => {
+      const label = document.createElement("label");
+      label.className = "nmp-options-row";
+      const text = document.createElement("span");
+      text.textContent = labelText;
+      label.append(text, control);
+      panel.appendChild(label);
+    };
+    const toggle = (checked: boolean, onChange: (value: boolean) => void): HTMLInputElement => {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = checked;
+      input.addEventListener("change", () => onChange(input.checked));
+      return input;
+    };
+    const saveFastRead = async (): Promise<void> => {
+      await this.plugin.saveSettings();
+      this.plugin.refreshFastReadSessions();
+      this.renderOptionsPanel();
+    };
+
+    heading("Fastread");
+    row("启用视觉锚点", toggle(settings.fastReadEnabled, (value) => {
+      settings.fastReadEnabled = value;
+      void saveFastRead();
+    }));
+
+    const ratio = document.createElement("select");
+    const parsed = parseFastReadAlgorithm(settings.fastReadAlgorithm);
+    const currentRatio = settings.fastReadEnabled ? parsed.restRatio : 0;
+    for (const value of [0, 0.35, 0.4, 0.45, 0.5]) {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = value === 0 ? "关闭" : String(value);
+      option.selected = value === currentRatio;
+      ratio.appendChild(option);
+    }
+    ratio.addEventListener("change", () => {
+      const value = Number(ratio.value);
+      settings.fastReadEnabled = value > 0;
+      if (value > 0) settings.fastReadAlgorithm = withFastReadRestRatio(settings.fastReadAlgorithm, value);
+      void saveFastRead();
+    });
+    row("强调比例", ratio);
+
+    row("跳过英文高频词", toggle(settings.fastReadExcludeCommonWords, (value) => {
+      settings.fastReadExcludeCommonWords = value;
+      void saveFastRead();
+    }));
+    row("淡化单词后半段", toggle(settings.fastReadDimRest, (value) => {
+      settings.fastReadDimRest = value;
+      void saveFastRead();
+    }));
+
+    const weight = document.createElement("select");
+    for (const value of [500, 600, 700]) {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = value === 600 ? "600（推荐）" : String(value);
+      option.selected = value === settings.fastReadFontWeight;
+      weight.appendChild(option);
+    }
+    weight.addEventListener("change", () => {
+      settings.fastReadFontWeight = Number(weight.value);
+      void saveFastRead();
+    });
+    row("强调字重", weight);
+
+    const details = document.createElement("details");
+    details.className = "nmp-options-advanced";
+    const summary = document.createElement("summary");
+    summary.textContent = "高级 Fastread 设置";
+    const algorithm = document.createElement("input");
+    algorithm.type = "text";
+    algorithm.value = settings.fastReadAlgorithm;
+    algorithm.setAttribute("aria-label", "Fastread algorithm string");
+    algorithm.addEventListener("change", () => {
+      settings.fastReadAlgorithm = algorithm.value.trim() || DEFAULT_FASTREAD_ALGORITHM;
+      void saveFastRead();
+    });
+    const commonWords = document.createElement("textarea");
+    commonWords.rows = 3;
+    commonWords.value = settings.fastReadCommonWords;
+    commonWords.setAttribute("aria-label", "英文高频词跳过表");
+    commonWords.addEventListener("change", () => {
+      settings.fastReadCommonWords = commonWords.value.trim();
+      void saveFastRead();
+    });
+    details.append(summary, algorithm, commonWords);
+    panel.appendChild(details);
+
+    heading("翻页");
+    row("翻页动画", toggle(settings.animate, (value) => {
+      settings.animate = value;
+      void this.plugin.saveSettings().then(() => this.plugin.refreshSessions());
+    }));
+    row("滚轮翻页", toggle(settings.wheelPaging, (value) => {
+      settings.wheelPaging = value;
+      void this.plugin.saveSettings();
+    }));
+    row("点击页面边缘翻页", toggle(settings.edgeClickPaging, (value) => {
+      settings.edgeClickPaging = value;
+      void this.plugin.saveSettings();
+    }));
   }
 
   private scheduleMeasure(): void {
@@ -336,6 +494,7 @@ class PaginationSession {
 
   private measure(position = this.currentFraction()): void {
     if (this.destroyed || !this.contentEl.isConnected) return;
+    this.clearFastReadOverlay();
     const viewportWidth = this.viewportEl.clientWidth;
     if (!viewportWidth) return;
 
@@ -374,6 +533,157 @@ class PaginationSession {
     void this.contentEl.offsetWidth;
     this.contentEl.style.transition = settings.animate ? "transform 0.2s ease" : "none";
     this.updateControls();
+    this.scheduleFastReadOverlay(0);
+  }
+
+  private clearFastReadOverlay(): void {
+    if (this.fastReadDrawTimer !== null) window.clearTimeout(this.fastReadDrawTimer);
+    this.fastReadDrawTimer = null;
+    this.fastReadDrawGeneration++;
+    this.fastReadOverlayEl.replaceChildren();
+    this.fastReadOverlayEl.hidden = true;
+    this.contentEl.dataset.fastreadWords = "0";
+  }
+
+  private scheduleFastReadOverlay(delay: number): void {
+    this.clearFastReadOverlay();
+    if (!this.plugin.settings.fastReadEnabled || !this.measured || this.destroyed) return;
+    const generation = this.fastReadDrawGeneration;
+    this.fastReadDrawTimer = window.setTimeout(() => {
+      this.fastReadDrawTimer = null;
+      if (!this.destroyed && generation === this.fastReadDrawGeneration) {
+        this.drawFastReadOverlay();
+      }
+    }, delay);
+  }
+
+  private drawFastReadOverlay(): void {
+    const overlay = this.fastReadOverlayEl;
+    if (!this.plugin.settings.fastReadEnabled) return;
+    const stageRect = this.stageEl.getBoundingClientRect();
+    const viewportRect = this.viewportEl.getBoundingClientRect();
+    if (stageRect.width <= 0 || stageRect.height <= 0) return;
+
+    overlay.style.left = `${stageRect.left - viewportRect.left}px`;
+    overlay.style.top = `${stageRect.top - viewportRect.top}px`;
+    overlay.style.width = `${stageRect.width}px`;
+    overlay.style.height = `${stageRect.height}px`;
+
+    const settings = this.plugin.settings;
+    const options = {
+      algorithm: settings.fastReadAlgorithm,
+      excludeCommonWords: settings.fastReadExcludeCommonWords,
+      commonWords: settings.fastReadCommonWords,
+      dimRest: settings.fastReadDimRest,
+    };
+    const background = getComputedStyle(this.viewportEl).backgroundColor;
+    const styleCache = new Map<Element, CSSStyleDeclaration>();
+    const intersectsStage = (rect: DOMRect): boolean => rect.right > stageRect.left
+      && rect.left < stageRect.right
+      && rect.bottom > stageRect.top
+      && rect.top < stageRect.bottom;
+    const jobs: Array<{
+      textNode: Text;
+      parent: Element;
+      match: ReturnType<typeof findFastReadMatches>[number];
+    }> = [];
+    for (const textNode of collectFastReadTextNodes(this.contentEl)) {
+      const parent = textNode.parentElement;
+      if (!parent || parent === this.contentEl) continue;
+      if (!Array.from(parent.getClientRects()).some(intersectsStage)) continue;
+      const text = textNode.nodeValue ?? "";
+      for (const match of findFastReadMatches(text, options)) {
+        jobs.push({ textNode, parent, match });
+      }
+    }
+
+    let decoratedWords = 0;
+    let cursor = 0;
+    const generation = this.fastReadDrawGeneration;
+    const drawBatch = (): void => {
+      if (this.destroyed || generation !== this.fastReadDrawGeneration) return;
+      const deadline = performance.now() + 8;
+      const fragment = this.contentEl.ownerDocument.createDocumentFragment();
+      while (cursor < jobs.length && performance.now() < deadline) {
+        const job = jobs[cursor++];
+        if (!job) break;
+        const { textNode, parent, match } = job;
+        const style = styleCache.get(parent) ?? getComputedStyle(parent);
+        styleCache.set(parent, style);
+        const highlightRange = this.contentEl.ownerDocument.createRange();
+        highlightRange.setStart(textNode, match.start);
+        highlightRange.setEnd(textNode, match.highlightEnd);
+        const highlightRect = Array.from(highlightRange.getClientRects()).find(intersectsStage);
+        if (!highlightRect) continue;
+
+        const createGlyph = (
+          rect: DOMRect,
+          text: string,
+          weight: string,
+          fontStyle: string,
+          color: string,
+          backgroundColor: string,
+          kind: "highlight" | "rest",
+        ): HTMLElement => {
+          const glyph = this.contentEl.ownerDocument.createElement("span");
+          glyph.className = `nmp-fastread-glyph is-${kind}`;
+          glyph.textContent = text;
+          glyph.style.left = `${rect.left - stageRect.left}px`;
+          glyph.style.top = `${rect.top - stageRect.top}px`;
+          glyph.style.height = `${rect.height}px`;
+          glyph.style.color = color;
+          glyph.style.backgroundColor = backgroundColor;
+          glyph.style.fontFamily = style.fontFamily;
+          glyph.style.fontSize = style.fontSize;
+          glyph.style.fontWeight = weight;
+          glyph.style.fontStyle = fontStyle;
+          glyph.style.fontVariant = style.fontVariant;
+          glyph.style.fontStretch = style.fontStretch;
+          glyph.style.fontFeatureSettings = style.fontFeatureSettings;
+          glyph.style.fontKerning = style.fontKerning;
+          glyph.style.letterSpacing = style.letterSpacing;
+          glyph.style.lineHeight = `${rect.height}px`;
+          return glyph;
+        };
+        fragment.appendChild(createGlyph(
+          highlightRect,
+          match.split.highlight,
+          String(settings.fastReadFontWeight),
+          "normal",
+          style.color,
+          "transparent",
+          "highlight",
+        ));
+        if (settings.fastReadDimRest && match.split.rest) {
+          const restRange = this.contentEl.ownerDocument.createRange();
+          restRange.setStart(textNode, match.highlightEnd);
+          restRange.setEnd(textNode, match.end);
+          const restRect = Array.from(restRange.getClientRects()).find(intersectsStage);
+          if (restRect) {
+            fragment.appendChild(createGlyph(
+              restRect,
+              match.split.rest,
+              style.fontWeight,
+              style.fontStyle,
+              `color-mix(in srgb, ${style.color} 70%, ${background})`,
+              background,
+              "rest",
+            ));
+          }
+        }
+        decoratedWords++;
+      }
+      overlay.appendChild(fragment);
+      overlay.hidden = false;
+      this.contentEl.dataset.fastreadWords = String(decoratedWords);
+      if (cursor < jobs.length) {
+        this.fastReadDrawTimer = window.setTimeout(() => {
+          this.fastReadDrawTimer = null;
+          drawBatch();
+        }, 0);
+      }
+    };
+    drawBatch();
   }
 
   private applyTransform(extra = 0): void {
@@ -381,9 +691,12 @@ class PaginationSession {
   }
 
   private goToPage(page: number, persist = true): void {
-    this.currentPage = clampPage(page, this.totalPages);
+    const nextPage = clampPage(page, this.totalPages);
+    this.clearFastReadOverlay();
+    this.currentPage = nextPage;
     this.applyTransform();
     this.updateControls();
+    this.scheduleFastReadOverlay(this.plugin.settings.animate ? 210 : 0);
     if (persist) this.schedulePersist();
   }
 
@@ -521,6 +834,7 @@ class PaginationSession {
     this.renderGeneration++;
     if (this.measureTimer !== null) window.clearTimeout(this.measureTimer);
     if (this.persistTimer !== null) window.clearTimeout(this.persistTimer);
+    if (this.fastReadDrawTimer !== null) window.clearTimeout(this.fastReadDrawTimer);
     this.resizeObserver.disconnect();
     this.mutationObserver.disconnect();
     for (const cleanup of this.cleanupCallbacks.splice(0)) cleanup();
@@ -615,7 +929,7 @@ export default class NativeMarkdownPaginatorPlugin extends Plugin {
   }
 
   refreshFastReadSessions(): void {
-    for (const session of this.sessions.values()) session.reload();
+    for (const session of this.sessions.values()) session.refreshFastRead();
   }
 
   private getMarkdownView(): MarkdownView | null {
@@ -805,85 +1119,6 @@ class NativePaginatorSettingTab extends PluginSettingTab {
           await this.saveAndRefresh();
         }));
 
-    new Setting(containerEl).setName("Fastread 视觉锚点").setHeading();
-    new Setting(containerEl)
-      .setName("随分页阅读启用")
-      .setDesc("只装饰当前分页阅读的显示 DOM，不修改 Markdown 文件。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.fastReadEnabled)
-        .onChange(async (value) => {
-          this.plugin.settings.fastReadEnabled = value;
-          await this.saveAndRefreshFastRead();
-        }));
-    new Setting(containerEl)
-      .setName("Algorithm string")
-      .setDesc("最后一项是更长单词的比例；此前各项依次指定各词长的强调字符数。")
-      .addText((text) => {
-        text.setValue(this.plugin.settings.fastReadAlgorithm);
-        text.inputEl.addEventListener("change", () => {
-          const value = text.getValue().trim();
-          this.plugin.settings.fastReadAlgorithm = value || DEFAULT_FASTREAD_ALGORITHM;
-          void this.saveAndRefreshFastRead();
-        });
-      });
-    const parsedAlgorithm = parseFastReadAlgorithm(this.plugin.settings.fastReadAlgorithm);
-    const currentRatio = this.plugin.settings.fastReadEnabled ? parsedAlgorithm.restRatio : 0;
-    new Setting(containerEl)
-      .setName("6 字母以上比例预设")
-      .addDropdown((dropdown) => dropdown
-        .addOptions({ "0": "0", "0.35": "0.35", "0.4": "0.4", "0.45": "0.45", "0.5": "0.5" })
-        .setValue([0, 0.35, 0.4, 0.45, 0.5].includes(currentRatio) ? String(currentRatio) : "0.45")
-        .onChange(async (value) => {
-          const ratio = Number(value);
-          this.plugin.settings.fastReadEnabled = ratio > 0;
-          if (ratio > 0) {
-            this.plugin.settings.fastReadAlgorithm = withFastReadRestRatio(
-              this.plugin.settings.fastReadAlgorithm,
-              ratio,
-            );
-          }
-          await this.saveAndRefreshFastRead();
-          this.display();
-        }));
-    new Setting(containerEl)
-      .setName("Exclude common words")
-      .setDesc("跳过下方英文高频词表，匹配不区分大小写。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.fastReadExcludeCommonWords)
-        .onChange(async (value) => {
-          this.plugin.settings.fastReadExcludeCommonWords = value;
-          await this.saveAndRefreshFastRead();
-        }));
-    new Setting(containerEl)
-      .setName("英文高频词跳过表")
-      .setDesc("可用逗号、空格、分号或换行分隔。")
-      .addTextArea((text) => {
-        text.setValue(this.plugin.settings.fastReadCommonWords);
-        text.inputEl.rows = 4;
-        text.inputEl.addEventListener("change", () => {
-          this.plugin.settings.fastReadCommonWords = text.getValue().trim();
-          void this.saveAndRefreshFastRead();
-        });
-      });
-    new Setting(containerEl)
-      .setName("Dim rest of word")
-      .setDesc("默认关闭；开启后未强调部分降到 70% 透明度。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.fastReadDimRest)
-        .onChange(async (value) => {
-          this.plugin.settings.fastReadDimRest = value;
-          await this.saveAndRefresh();
-        }));
-    new Setting(containerEl)
-      .setName("强调字重")
-      .addDropdown((dropdown) => dropdown
-        .addOptions({ "500": "500", "600": "600（推荐）", "700": "700" })
-        .setValue(String(this.plugin.settings.fastReadFontWeight))
-        .onChange(async (value) => {
-          this.plugin.settings.fastReadFontWeight = Number(value);
-          await this.saveAndRefresh();
-        }));
-
     new Setting(containerEl).setName("翻页").setHeading();
     new Setting(containerEl).setName("翻页动画").addToggle((toggle) => toggle
       .setValue(this.plugin.settings.animate)
@@ -909,10 +1144,5 @@ class NativePaginatorSettingTab extends PluginSettingTab {
   private async saveAndRefresh(): Promise<void> {
     await this.plugin.saveSettings();
     this.plugin.refreshSessions();
-  }
-
-  private async saveAndRefreshFastRead(): Promise<void> {
-    await this.plugin.saveSettings();
-    this.plugin.refreshFastReadSessions();
   }
 }

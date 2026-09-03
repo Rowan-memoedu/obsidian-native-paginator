@@ -1,7 +1,7 @@
 {
   "id": "native-markdown-paginator",
   "name": "Native Markdown Paginator",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minAppVersion": "1.12.0",
   "description": "Add horizontal pages, a progress scrubber, and optional Fastread visual anchors to the native Markdown Reading View.",
   "author": "amymiller76717-sudo",

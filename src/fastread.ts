@@ -5,6 +5,7 @@ export interface FastReadOptions {
   algorithm: string;
   excludeCommonWords: boolean;
   commonWords: string;
+  dimRest: boolean;
 }
 
 export interface FastReadSplit {
@@ -15,6 +16,14 @@ export interface FastReadSplit {
 export interface ParsedFastReadAlgorithm {
   sizes: number[];
   restRatio: number;
+}
+
+export interface FastReadMatch {
+  start: number;
+  highlightEnd: number;
+  end: number;
+  word: string;
+  split: FastReadSplit;
 }
 
 const FALLBACK_ALGORITHM: ParsedFastReadAlgorithm = {
@@ -112,9 +121,7 @@ export function splitFastReadWord(
   };
 }
 
-export function decorateFastRead(root: HTMLElement, options: FastReadOptions): number {
-  const algorithm = parseFastReadAlgorithm(options.algorithm);
-  const commonWords = parseCommonWords(options.commonWords);
+export function collectFastReadTextNodes(root: HTMLElement): Text[] {
   const documentRef = root.ownerDocument;
   const nodeFilter = documentRef.defaultView?.NodeFilter ?? NodeFilter;
   const walker = documentRef.createTreeWalker(root, nodeFilter.SHOW_TEXT, {
@@ -129,47 +136,31 @@ export function decorateFastRead(root: HTMLElement, options: FastReadOptions): n
   });
   const textNodes: Text[] = [];
   while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+  return textNodes;
+}
 
-  let decoratedWords = 0;
-  for (const textNode of textNodes) {
-    const text = textNode.nodeValue ?? "";
-    LATIN_WORD.lastIndex = 0;
-    const matches = Array.from(text.matchAll(LATIN_WORD));
-    if (matches.length === 0) continue;
-    const fragment = documentRef.createDocumentFragment();
-    let cursor = 0;
-    let changed = false;
-
-    for (const match of matches) {
-      const index = match.index ?? 0;
-      const word = match[0];
-      fragment.append(text.slice(cursor, index));
-      const split = splitFastReadWord(
-        word,
-        algorithm,
-        commonWords,
-        options.excludeCommonWords,
-      );
-      if (!split) {
-        fragment.append(word);
-      } else {
-        const highlight = documentRef.createElement("span");
-        highlight.className = "fastread-highlight";
-        highlight.textContent = split.highlight;
-        fragment.appendChild(highlight);
-        if (split.rest) {
-          const rest = documentRef.createElement("span");
-          rest.className = "fastread-rest";
-          rest.textContent = split.rest;
-          fragment.appendChild(rest);
-        }
-        decoratedWords++;
-        changed = true;
-      }
-      cursor = index + word.length;
-    }
-    fragment.append(text.slice(cursor));
-    if (changed) textNode.replaceWith(fragment);
+export function findFastReadMatches(text: string, options: FastReadOptions): FastReadMatch[] {
+  const algorithm = parseFastReadAlgorithm(options.algorithm);
+  const commonWords = parseCommonWords(options.commonWords);
+  LATIN_WORD.lastIndex = 0;
+  const matches: FastReadMatch[] = [];
+  for (const match of text.matchAll(LATIN_WORD)) {
+    const index = match.index ?? 0;
+    const word = match[0];
+    const split = splitFastReadWord(
+      word,
+      algorithm,
+      commonWords,
+      options.excludeCommonWords,
+    );
+    if (!split) continue;
+    matches.push({
+      start: index,
+      highlightEnd: index + split.highlight.length,
+      end: index + word.length,
+      word,
+      split,
+    });
   }
-  return decoratedWords;
+  return matches;
 }

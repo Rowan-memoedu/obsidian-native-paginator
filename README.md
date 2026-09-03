@@ -32,10 +32,13 @@ default algorithm string is `0 0 0 2 2 0.45`:
 - Links, code, math, form controls, metadata/frontmatter, and existing decoration
   spans are excluded.
 
-The algorithm, intensity preset (`0`, `0.35`, `0.4`, `0.45`, or `0.5`), common-word
-list, rest dimming, and emphasis weight can all be changed in plugin settings. The
-feature is scoped to this plugin's paginated Reading View; ordinary Reading View,
-Live Preview, and Source mode are not globally decorated.
+Use the `Aa` button beside the page counter to open the in-reader plugin panel. The
+algorithm, intensity preset (`0`, `0.35`, `0.4`, `0.45`, or `0.5`), common-word list,
+rest dimming, emphasis weight, and page-turn switches are all available there without
+opening Obsidian settings. Fastread is drawn only over the currently visible spread,
+so the full document is not split into thousands of inline DOM nodes. The feature is
+scoped to this plugin's paginated Reading View; ordinary Reading View, Live Preview,
+and Source mode are not globally decorated.
 
 ## Use
 

@@ -4,6 +4,7 @@ import {
   DEFAULT_FASTREAD_ALGORITHM,
   DEFAULT_FASTREAD_COMMON_WORDS,
   fastReadHighlightLength,
+  findFastReadMatches,
   parseCommonWords,
   parseFastReadAlgorithm,
   splitFastReadWord,
@@ -54,4 +55,24 @@ test("the final token remains the long-word ratio for variable-length formulas",
   assert.deepEqual(originalFormat, { sizes: [0, 1, 1, 2], restRatio: 0.4 });
   assert.equal(fastReadHighlightLength("words", originalFormat), 2);
   assert.equal(withFastReadRestRatio("0 0 0 2 2 0.45", 0.35), "0 0 0 2 2 0.35");
+});
+
+test("visible-page renderer receives exact text offsets without changing source text", () => {
+  const source = "a read development";
+  const matches = findFastReadMatches(source, {
+    algorithm: DEFAULT_FASTREAD_ALGORITHM,
+    excludeCommonWords: true,
+    commonWords: DEFAULT_FASTREAD_COMMON_WORDS,
+    dimRest: false,
+  });
+  assert.deepEqual(matches.map(({ start, highlightEnd, end, split }) => ({
+    start,
+    highlightEnd,
+    end,
+    split,
+  })), [
+    { start: 2, highlightEnd: 4, end: 6, split: { highlight: "re", rest: "ad" } },
+    { start: 7, highlightEnd: 12, end: 18, split: { highlight: "devel", rest: "opment" } },
+  ]);
+  assert.equal(source, "a read development");
 });
