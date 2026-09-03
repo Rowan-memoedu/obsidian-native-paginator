@@ -1,0 +1,301 @@
+.workspace-leaf-content[data-type="markdown"].nmp-active .view-content,
+.workspace-leaf-content[data-type="markdown"].nmp-active .markdown-reading-view {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .markdown-reading-view {
+  position: relative;
+  padding: 0 !important;
+}
+
+/* Keep the leaf a native MarkdownView, but replace its virtualized preview surface
+   with a fully rendered book stage while pagination is active. */
+.workspace-leaf-content[data-type="markdown"].nmp-active .markdown-preview-view {
+  display: none !important;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-viewport {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  outline: none;
+  touch-action: pan-y;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-viewport.nmp-tint-sepia {
+  --background-primary: #f4ecd8;
+  --background-primary-alt: #efe4ca;
+  --background-secondary: #efe4ca;
+  --background-modifier-border: #ddceac;
+  --text-normal: #4a3f33;
+  --text-muted: #7a6a55;
+  --text-faint: #a08d74;
+  --text-accent: #8a5a2b;
+  --interactive-accent: #b08150;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-viewport.nmp-tint-cream {
+  --background-primary: #fbf6ea;
+  --background-primary-alt: #f4eddc;
+  --background-secondary: #f4eddc;
+  --background-modifier-border: #e4dac2;
+  --text-normal: #3f3a31;
+  --text-muted: #736c5e;
+  --text-faint: #9c9484;
+  --text-accent: #7c6a3f;
+  --interactive-accent: #b9a267;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-viewport.nmp-tint-gray {
+  --background-primary: #e9e9e6;
+  --background-primary-alt: #e0e0dc;
+  --background-secondary: #e0e0dc;
+  --background-modifier-border: #cdcdc8;
+  --text-normal: #35383a;
+  --text-muted: #6a6d70;
+  --text-faint: #94979a;
+  --text-accent: #4a6572;
+  --interactive-accent: #7f949e;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-viewport.nmp-tint-night {
+  --background-primary: #0c0c0e;
+  --background-primary-alt: #141417;
+  --background-secondary: #141417;
+  --background-modifier-border: #26262b;
+  --text-normal: #a6a29b;
+  --text-muted: #6e6a64;
+  --text-faint: #4b4844;
+  --text-accent: #8a9aa8;
+  --interactive-accent: #566470;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-stage {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-stage.nmp-two-page::after {
+  content: "";
+  position: absolute;
+  top: 1.6em;
+  bottom: 2.2em;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: var(--background-modifier-border);
+  pointer-events: none;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content {
+  box-sizing: border-box;
+  width: auto;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 1.4em 0 2em;
+  overflow: visible;
+  column-width: auto;
+  column-gap: var(--nmp-column-gap, 2.5em);
+  column-fill: auto;
+  font-family: var(--nmp-font-family, var(--font-text));
+  font-size: var(--nmp-font-size, 1em);
+  line-height: var(--nmp-line-height, 1.6);
+  color: var(--text-normal);
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content > :first-child {
+  margin-top: 0;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content p,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content li {
+  line-height: var(--nmp-line-height, 1.6);
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content p {
+  margin-block: 0 0.9em;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h1,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h2,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h3,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h4,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h5,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h6 {
+  break-after: avoid;
+  break-inside: avoid;
+  font-family: var(--nmp-font-family, var(--font-text));
+  line-height: 1.3;
+  color: var(--text-normal);
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-title {
+  margin: 0 0 0.8em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: 1.5em;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content a {
+  color: var(--text-accent);
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content img,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content svg,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content figure,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content audio,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content video,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content .math-block {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content img,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content svg,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content canvas,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content iframe,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content video {
+  max-width: 100%;
+  max-height: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content pre,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content code {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content td,
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content th {
+  overflow-wrap: anywhere;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-nav-button {
+  position: absolute;
+  top: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2em;
+  height: 3.2em;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 6px);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  font-size: 1.4em;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-nav-button:disabled {
+  opacity: 0 !important;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-previous {
+  left: 8px;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-next {
+  right: 8px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .workspace-leaf-content[data-type="markdown"].nmp-active .nmp-viewport:hover .nmp-nav-button:not(:disabled) {
+    opacity: 0.85;
+  }
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-statusbar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 14px 8px;
+  background: linear-gradient(to top, var(--background-primary) 35%, transparent);
+  pointer-events: none;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-scrub {
+  padding: 10px 0 4px;
+  margin: -10px 0 -4px;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-progress {
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-progress-fill {
+  width: 100%;
+  height: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: var(--interactive-accent);
+  transition: transform 0.2s ease;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-scrub.is-scrubbing .nmp-progress {
+  transform: scaleY(1.8);
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-scrub.is-scrubbing .nmp-progress-fill {
+  transition: none;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-status-text {
+  width: fit-content;
+  margin: 0 auto;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 0.75em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+}

@@ -1,0 +1,27 @@
+{
+  "name": "obsidian-native-paginator",
+  "version": "0.1.0",
+  "description": "Book-style horizontal pagination inside Obsidian's native Markdown Reading View.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "check": "npm run test && npm run build"
+  },
+  "keywords": [
+    "obsidian",
+    "markdown",
+    "pagination",
+    "reading"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "esbuild": "0.25.5",
+    "obsidian": "latest",
+    "typescript": "^5.8.3"
+  }
+}
+
