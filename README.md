@@ -2,7 +2,8 @@
 
 MD Reader-style horizontal book pagination embedded inside Obsidian's existing
 `MarkdownView`. It keeps the note recognizable as a normal Markdown view so sidebar
-tools such as Voice Reader can remain open and resolve the current file/editor.
+tools such as Voice Reader can remain open and resolve the current file/editor. It
+also includes an optional Fastread-style visual anchor layer for English words.
 
 ## What it does
 
@@ -14,6 +15,27 @@ tools such as Voice Reader can remain open and resolve the current file/editor.
 - Applies only to explicitly enabled Markdown notes in Reading View.
 - Never collapses sidebars or adds an immersive app-wide state.
 - Uses `STSong, 华文宋体, SimSun, serif` and sepia paper by default.
+- Adds Fastread emphasis only to the rendered pagination DOM and never writes it
+  into the Markdown file.
+
+## Fastread visual anchors
+
+Fastread decoration is enabled by default whenever paginated reading is active. The
+default algorithm string is `0 0 0 2 2 0.45`:
+
+- 1–3-letter words are unchanged.
+- 4- and 5-letter words emphasize their first 2 letters.
+- Words of 6 or more letters emphasize 45%, rounded up.
+- Common words are skipped using an editable, case-insensitive list that starts
+  with `a, an, the, of, to, in, is, and`.
+- The emphasized part uses weight 600; the rest keeps full opacity by default.
+- Links, code, math, form controls, metadata/frontmatter, and existing decoration
+  spans are excluded.
+
+The algorithm, intensity preset (`0`, `0.35`, `0.4`, `0.45`, or `0.5`), common-word
+list, rest dimming, and emphasis weight can all be changed in plugin settings. The
+feature is scoped to this plugin's paginated Reading View; ordinary Reading View,
+Live Preview, and Source mode are not globally decorated.
 
 ## Use
 
@@ -42,11 +64,14 @@ npm install
 npm run check
 ```
 
-`npm run check` runs the geometry tests, TypeScript checking, and the production
-esbuild bundle.
+`npm run check` runs the geometry and Fastread algorithm tests, TypeScript checking,
+and the production esbuild bundle.
 
 ## Credits
 
 The pagination geometry and interaction model were studied from
 [mrrepac/obsidian-md-reader](https://github.com/mrrepac/obsidian-md-reader), released
-under the MIT License. This plugin is also MIT licensed.
+under the MIT License. The Fastread algorithm and rendered-DOM decoration model were
+adapted from [SVS696/obsidian-fastread](https://github.com/SVS696/obsidian-fastread),
+also released under the MIT License. See `THIRD_PARTY_NOTICES.md`. This plugin is MIT
+licensed.

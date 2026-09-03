@@ -138,6 +138,18 @@
   margin-block: 0 0.9em;
 }
 
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content .fastread-highlight {
+  color: inherit !important;
+  font-weight: var(--nmp-fastread-weight, 600) !important;
+  font-style: normal !important;
+}
+
+.workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content .fastread-rest {
+  color: inherit !important;
+  font-style: inherit !important;
+  opacity: var(--nmp-fastread-rest-opacity, 1) !important;
+}
+
 .workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h1,
 .workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h2,
 .workspace-leaf-content[data-type="markdown"].nmp-active .nmp-content h3,

@@ -17,6 +17,13 @@ import {
   fractionFromPage,
   pageFromFraction,
 } from "./layout";
+import {
+  DEFAULT_FASTREAD_ALGORITHM,
+  DEFAULT_FASTREAD_COMMON_WORDS,
+  decorateFastRead,
+  parseFastReadAlgorithm,
+  withFastReadRestRatio,
+} from "./fastread";
 
 type PageTint = "none" | "sepia" | "cream" | "gray" | "night";
 
@@ -35,9 +42,15 @@ interface NativePaginatorSettings {
   animate: boolean;
   wheelPaging: boolean;
   edgeClickPaging: boolean;
+  fastReadEnabled: boolean;
+  fastReadAlgorithm: string;
+  fastReadExcludeCommonWords: boolean;
+  fastReadCommonWords: string;
+  fastReadDimRest: boolean;
+  fastReadFontWeight: number;
 }
 
-const SETTINGS_SCHEMA = 2;
+const SETTINGS_SCHEMA = 3;
 const DEFAULT_SETTINGS: NativePaginatorSettings = {
   schemaVersion: SETTINGS_SCHEMA,
   enabledFiles: {},
@@ -53,6 +66,12 @@ const DEFAULT_SETTINGS: NativePaginatorSettings = {
   animate: true,
   wheelPaging: true,
   edgeClickPaging: true,
+  fastReadEnabled: true,
+  fastReadAlgorithm: DEFAULT_FASTREAD_ALGORITHM,
+  fastReadExcludeCommonWords: true,
+  fastReadCommonWords: DEFAULT_FASTREAD_COMMON_WORDS,
+  fastReadDimRest: false,
+  fastReadFontWeight: 600,
 };
 
 const INTERACTIVE_SELECTOR = [
@@ -261,6 +280,15 @@ class PaginationSession {
       this.contentEl.prepend(title);
     }
 
+    const decoratedWords = this.plugin.settings.fastReadEnabled
+      ? decorateFastRead(this.contentEl, {
+        algorithm: this.plugin.settings.fastReadAlgorithm,
+        excludeCommonWords: this.plugin.settings.fastReadExcludeCommonWords,
+        commonWords: this.plugin.settings.fastReadCommonWords,
+      })
+      : 0;
+    this.contentEl.dataset.fastreadWords = String(decoratedWords);
+
     this.contentEl.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
       if (!image.complete) this.listen(image, "load", () => this.scheduleMeasure(), { once: true });
     });
@@ -292,6 +320,8 @@ class PaginationSession {
     this.contentEl.style.setProperty("--nmp-font-size", `${settings.fontSize}em`);
     this.contentEl.style.setProperty("--nmp-line-height", String(settings.lineHeight));
     this.contentEl.style.setProperty("--nmp-column-gap", `${settings.columnGap}em`);
+    this.contentEl.style.setProperty("--nmp-fastread-weight", String(settings.fastReadFontWeight));
+    this.contentEl.style.setProperty("--nmp-fastread-rest-opacity", settings.fastReadDimRest ? "0.7" : "1");
     this.contentEl.style.transition = settings.animate ? "transform 0.2s ease" : "none";
   }
 
@@ -554,10 +584,9 @@ export default class NativeMarkdownPaginatorPlugin extends Plugin {
 
   private async loadSettings(): Promise<void> {
     const loaded = (await this.loadData()) as Partial<NativePaginatorSettings> | null;
-    const sameSchema = loaded?.schemaVersion === SETTINGS_SCHEMA;
     this.settings = {
       ...DEFAULT_SETTINGS,
-      ...(sameSchema ? loaded : {}),
+      ...(loaded ?? {}),
       schemaVersion: SETTINGS_SCHEMA,
       enabledFiles: { ...(loaded?.enabledFiles ?? {}) },
       positions: { ...(loaded?.positions ?? {}) },
@@ -583,6 +612,10 @@ export default class NativeMarkdownPaginatorPlugin extends Plugin {
 
   refreshSessions(): void {
     for (const session of this.sessions.values()) session.refreshSettings();
+  }
+
+  refreshFastReadSessions(): void {
+    for (const session of this.sessions.values()) session.reload();
   }
 
   private getMarkdownView(): MarkdownView | null {
@@ -772,6 +805,85 @@ class NativePaginatorSettingTab extends PluginSettingTab {
           await this.saveAndRefresh();
         }));
 
+    new Setting(containerEl).setName("Fastread 视觉锚点").setHeading();
+    new Setting(containerEl)
+      .setName("随分页阅读启用")
+      .setDesc("只装饰当前分页阅读的显示 DOM，不修改 Markdown 文件。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.fastReadEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.fastReadEnabled = value;
+          await this.saveAndRefreshFastRead();
+        }));
+    new Setting(containerEl)
+      .setName("Algorithm string")
+      .setDesc("最后一项是更长单词的比例；此前各项依次指定各词长的强调字符数。")
+      .addText((text) => {
+        text.setValue(this.plugin.settings.fastReadAlgorithm);
+        text.inputEl.addEventListener("change", () => {
+          const value = text.getValue().trim();
+          this.plugin.settings.fastReadAlgorithm = value || DEFAULT_FASTREAD_ALGORITHM;
+          void this.saveAndRefreshFastRead();
+        });
+      });
+    const parsedAlgorithm = parseFastReadAlgorithm(this.plugin.settings.fastReadAlgorithm);
+    const currentRatio = this.plugin.settings.fastReadEnabled ? parsedAlgorithm.restRatio : 0;
+    new Setting(containerEl)
+      .setName("6 字母以上比例预设")
+      .addDropdown((dropdown) => dropdown
+        .addOptions({ "0": "0", "0.35": "0.35", "0.4": "0.4", "0.45": "0.45", "0.5": "0.5" })
+        .setValue([0, 0.35, 0.4, 0.45, 0.5].includes(currentRatio) ? String(currentRatio) : "0.45")
+        .onChange(async (value) => {
+          const ratio = Number(value);
+          this.plugin.settings.fastReadEnabled = ratio > 0;
+          if (ratio > 0) {
+            this.plugin.settings.fastReadAlgorithm = withFastReadRestRatio(
+              this.plugin.settings.fastReadAlgorithm,
+              ratio,
+            );
+          }
+          await this.saveAndRefreshFastRead();
+          this.display();
+        }));
+    new Setting(containerEl)
+      .setName("Exclude common words")
+      .setDesc("跳过下方英文高频词表，匹配不区分大小写。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.fastReadExcludeCommonWords)
+        .onChange(async (value) => {
+          this.plugin.settings.fastReadExcludeCommonWords = value;
+          await this.saveAndRefreshFastRead();
+        }));
+    new Setting(containerEl)
+      .setName("英文高频词跳过表")
+      .setDesc("可用逗号、空格、分号或换行分隔。")
+      .addTextArea((text) => {
+        text.setValue(this.plugin.settings.fastReadCommonWords);
+        text.inputEl.rows = 4;
+        text.inputEl.addEventListener("change", () => {
+          this.plugin.settings.fastReadCommonWords = text.getValue().trim();
+          void this.saveAndRefreshFastRead();
+        });
+      });
+    new Setting(containerEl)
+      .setName("Dim rest of word")
+      .setDesc("默认关闭；开启后未强调部分降到 70% 透明度。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.fastReadDimRest)
+        .onChange(async (value) => {
+          this.plugin.settings.fastReadDimRest = value;
+          await this.saveAndRefresh();
+        }));
+    new Setting(containerEl)
+      .setName("强调字重")
+      .addDropdown((dropdown) => dropdown
+        .addOptions({ "500": "500", "600": "600（推荐）", "700": "700" })
+        .setValue(String(this.plugin.settings.fastReadFontWeight))
+        .onChange(async (value) => {
+          this.plugin.settings.fastReadFontWeight = Number(value);
+          await this.saveAndRefresh();
+        }));
+
     new Setting(containerEl).setName("翻页").setHeading();
     new Setting(containerEl).setName("翻页动画").addToggle((toggle) => toggle
       .setValue(this.plugin.settings.animate)
@@ -797,5 +909,10 @@ class NativePaginatorSettingTab extends PluginSettingTab {
   private async saveAndRefresh(): Promise<void> {
     await this.plugin.saveSettings();
     this.plugin.refreshSessions();
+  }
+
+  private async saveAndRefreshFastRead(): Promise<void> {
+    await this.plugin.saveSettings();
+    this.plugin.refreshFastReadSessions();
   }
 }

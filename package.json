@@ -1,7 +1,7 @@
 {
   "name": "obsidian-native-paginator",
-  "version": "0.1.0",
-  "description": "Book-style horizontal pagination inside Obsidian's native Markdown Reading View.",
+  "version": "0.2.0",
+  "description": "Book-style horizontal pagination and Fastread visual anchors inside Obsidian's native Markdown Reading View.",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
     "obsidian",
     "markdown",
     "pagination",
-    "reading"
+    "reading",
+    "fastread",
+    "bionic-reading"
   ],
   "license": "MIT",
   "devDependencies": {
@@ -24,4 +26,3 @@
     "typescript": "^5.8.3"
   }
 }
-
