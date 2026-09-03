@@ -57,7 +57,7 @@ test("the final token remains the long-word ratio for variable-length formulas",
   assert.equal(withFastReadRestRatio("0 0 0 2 2 0.45", 0.35), "0 0 0 2 2 0.35");
 });
 
-test("visible-page renderer receives exact text offsets without changing source text", () => {
+test("cached visible-page rendering receives exact text offsets without changing source text", () => {
   const source = "a read development";
   const matches = findFastReadMatches(source, {
     algorithm: DEFAULT_FASTREAD_ALGORITHM,

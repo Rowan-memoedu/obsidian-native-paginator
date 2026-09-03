@@ -98,6 +98,36 @@ function stripFrontmatter(raw: string, endOffset?: number): string {
   return body.replace(/^\s+/, "");
 }
 
+interface FastReadTextJob {
+  textNode: Text;
+  parent: Element;
+  matches: ReturnType<typeof findFastReadMatches>;
+}
+
+interface FastReadGlyph {
+  backgroundColor: string;
+  color: string;
+  fontFamily: string;
+  fontFeatureSettings: string;
+  fontKerning: string;
+  fontSize: string;
+  fontStretch: string;
+  fontStyle: string;
+  fontVariant: string;
+  fontWeight: string;
+  height: number;
+  kind: "highlight" | "rest";
+  left: number;
+  letterSpacing: string;
+  text: string;
+  top: number;
+}
+
+interface FastReadPage {
+  decoratedWords: number;
+  glyphs: FastReadGlyph[];
+}
+
 class PaginationSession {
   private readonly plugin: NativeMarkdownPaginatorPlugin;
   readonly view: MarkdownView;
@@ -124,6 +154,11 @@ class PaginationSession {
   private persistTimer: number | null = null;
   private fastReadDrawTimer: number | null = null;
   private fastReadDrawGeneration = 0;
+  private fastReadBuildTimer: number | null = null;
+  private fastReadBuildGeneration = 0;
+  private fastReadTextJobs: FastReadTextJob[] = [];
+  private fastReadPages: FastReadPage[] = [];
+  private fastReadPagesReady = false;
   private pageStride = 1;
   private totalPages = 1;
   private currentPage = 0;
@@ -269,6 +304,8 @@ class PaginationSession {
 
   refreshFastRead(): void {
     this.applySettings();
+    this.rebuildFastReadTextJobs();
+    this.rebuildFastReadPages();
     this.scheduleFastReadOverlay(0);
   }
 
@@ -315,6 +352,7 @@ class PaginationSession {
     }
 
     this.contentEl.dataset.fastreadWords = "0";
+    this.rebuildFastReadTextJobs();
 
     this.contentEl.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
       if (!image.complete) this.listen(image, "load", () => this.scheduleMeasure(), { once: true });
@@ -533,6 +571,7 @@ class PaginationSession {
     void this.contentEl.offsetWidth;
     this.contentEl.style.transition = settings.animate ? "transform 0.2s ease" : "none";
     this.updateControls();
+    this.rebuildFastReadPages();
     this.scheduleFastReadOverlay(0);
   }
 
@@ -557,9 +596,153 @@ class PaginationSession {
     }, delay);
   }
 
+  private rebuildFastReadTextJobs(): void {
+    this.fastReadTextJobs = [];
+    if (!this.plugin.settings.fastReadEnabled) return;
+    const settings = this.plugin.settings;
+    const options = {
+      algorithm: settings.fastReadAlgorithm,
+      excludeCommonWords: settings.fastReadExcludeCommonWords,
+      commonWords: settings.fastReadCommonWords,
+      dimRest: settings.fastReadDimRest,
+    };
+    for (const textNode of collectFastReadTextNodes(this.contentEl)) {
+      const parent = textNode.parentElement;
+      if (!parent || parent === this.contentEl) continue;
+      const matches = findFastReadMatches(textNode.nodeValue ?? "", options);
+      if (matches.length > 0) this.fastReadTextJobs.push({ textNode, parent, matches });
+    }
+  }
+
+  private rebuildFastReadPages(): void {
+    if (this.fastReadBuildTimer !== null) window.clearTimeout(this.fastReadBuildTimer);
+    this.fastReadBuildTimer = null;
+    const generation = ++this.fastReadBuildGeneration;
+    this.fastReadPages = [];
+    this.fastReadPagesReady = false;
+    if (!this.plugin.settings.fastReadEnabled || !this.measured || this.destroyed) return;
+
+    const documentRef = this.contentEl.ownerDocument;
+    const stageRect = this.stageEl.getBoundingClientRect();
+    const contentRect = this.contentEl.getBoundingClientRect();
+    if (stageRect.width <= 0 || stageRect.height <= 0 || this.pageStride <= 0) return;
+
+    const settings = this.plugin.settings;
+    const background = getComputedStyle(this.viewportEl).backgroundColor;
+    const pages = Array.from({ length: this.totalPages }, (): FastReadPage => ({
+      decoratedWords: 0,
+      glyphs: [],
+    }));
+    const styleCache = new Map<Element, CSSStyleDeclaration>();
+    const jobs = this.fastReadTextJobs.flatMap(({ textNode, parent, matches }) => (
+      matches.map((match) => ({ textNode, parent, match }))
+    ));
+    let cursor = 0;
+
+    const pagePosition = (rect: DOMRect): { page: number; left: number; top: number } | null => {
+      const absoluteLeft = rect.left - contentRect.left;
+      const page = Math.floor((absoluteLeft + 0.5) / this.pageStride);
+      const left = absoluteLeft - page * this.pageStride;
+      const top = rect.top - stageRect.top;
+      if (
+        page < 0
+        || page >= pages.length
+        || left < -0.5
+        || left >= stageRect.width
+        || top + rect.height <= 0
+        || top >= stageRect.height
+      ) return null;
+      return { page, left, top };
+    };
+    const glyphFrom = (
+      rect: DOMRect,
+      position: { left: number; top: number },
+      text: string,
+      style: CSSStyleDeclaration,
+      kind: "highlight" | "rest",
+    ): FastReadGlyph => ({
+      backgroundColor: kind === "highlight" ? "transparent" : background,
+      color: kind === "highlight"
+        ? style.color
+        : `color-mix(in srgb, ${style.color} 70%, ${background})`,
+      fontFamily: style.fontFamily,
+      fontFeatureSettings: style.fontFeatureSettings,
+      fontKerning: style.fontKerning,
+      fontSize: style.fontSize,
+      fontStretch: style.fontStretch,
+      fontStyle: kind === "highlight" ? "normal" : style.fontStyle,
+      fontVariant: style.fontVariant,
+      fontWeight: kind === "highlight" ? String(settings.fastReadFontWeight) : style.fontWeight,
+      height: rect.height,
+      kind,
+      left: position.left,
+      letterSpacing: style.letterSpacing,
+      text,
+      top: position.top,
+    });
+    const buildBatch = (): void => {
+      if (this.destroyed || generation !== this.fastReadBuildGeneration) return;
+      const deadline = performance.now() + 8;
+      while (cursor < jobs.length && performance.now() < deadline) {
+        const job = jobs[cursor++];
+        if (!job) break;
+        const { textNode, parent, match } = job;
+        const style = styleCache.get(parent) ?? getComputedStyle(parent);
+        styleCache.set(parent, style);
+        const highlightRange = documentRef.createRange();
+        highlightRange.setStart(textNode, match.start);
+        highlightRange.setEnd(textNode, match.highlightEnd);
+        const highlightRect = Array.from(highlightRange.getClientRects())[0];
+        if (!highlightRect) continue;
+        const highlightPosition = pagePosition(highlightRect);
+        if (!highlightPosition) continue;
+        const page = pages[highlightPosition.page];
+        if (!page) continue;
+        page.glyphs.push(glyphFrom(
+          highlightRect,
+          highlightPosition,
+          match.split.highlight,
+          style,
+          "highlight",
+        ));
+        if (match.split.rest) {
+          const restRange = documentRef.createRange();
+          restRange.setStart(textNode, match.highlightEnd);
+          restRange.setEnd(textNode, match.end);
+          const restRect = Array.from(restRange.getClientRects())[0];
+          if (restRect) {
+            const restPosition = pagePosition(restRect);
+            if (restPosition?.page === highlightPosition.page) {
+              page.glyphs.push(glyphFrom(
+                restRect,
+                restPosition,
+                match.split.rest,
+                style,
+                "rest",
+              ));
+            }
+          }
+        }
+        page.decoratedWords++;
+      }
+      if (cursor < jobs.length) {
+        this.fastReadBuildTimer = window.setTimeout(() => {
+          this.fastReadBuildTimer = null;
+          buildBatch();
+        }, 0);
+        return;
+      }
+      if (this.destroyed || generation !== this.fastReadBuildGeneration) return;
+      this.fastReadPages = pages;
+      this.fastReadPagesReady = true;
+      if (this.fastReadDrawTimer === null) this.scheduleFastReadOverlay(0);
+    };
+    buildBatch();
+  }
+
   private drawFastReadOverlay(): void {
     const overlay = this.fastReadOverlayEl;
-    if (!this.plugin.settings.fastReadEnabled) return;
+    if (!this.plugin.settings.fastReadEnabled || !this.fastReadPagesReady) return;
     const stageRect = this.stageEl.getBoundingClientRect();
     const viewportRect = this.viewportEl.getBoundingClientRect();
     if (stageRect.width <= 0 || stageRect.height <= 0) return;
@@ -569,121 +752,36 @@ class PaginationSession {
     overlay.style.width = `${stageRect.width}px`;
     overlay.style.height = `${stageRect.height}px`;
 
-    const settings = this.plugin.settings;
-    const options = {
-      algorithm: settings.fastReadAlgorithm,
-      excludeCommonWords: settings.fastReadExcludeCommonWords,
-      commonWords: settings.fastReadCommonWords,
-      dimRest: settings.fastReadDimRest,
-    };
-    const background = getComputedStyle(this.viewportEl).backgroundColor;
-    const styleCache = new Map<Element, CSSStyleDeclaration>();
-    const intersectsStage = (rect: DOMRect): boolean => rect.right > stageRect.left
-      && rect.left < stageRect.right
-      && rect.bottom > stageRect.top
-      && rect.top < stageRect.bottom;
-    const jobs: Array<{
-      textNode: Text;
-      parent: Element;
-      match: ReturnType<typeof findFastReadMatches>[number];
-    }> = [];
-    for (const textNode of collectFastReadTextNodes(this.contentEl)) {
-      const parent = textNode.parentElement;
-      if (!parent || parent === this.contentEl) continue;
-      if (!Array.from(parent.getClientRects()).some(intersectsStage)) continue;
-      const text = textNode.nodeValue ?? "";
-      for (const match of findFastReadMatches(text, options)) {
-        jobs.push({ textNode, parent, match });
-      }
+    const page = this.fastReadPages[this.currentPage];
+    if (!page) return;
+    const fragment = this.contentEl.ownerDocument.createDocumentFragment();
+    for (const data of page.glyphs) {
+      if (data.kind === "rest" && !this.plugin.settings.fastReadDimRest) continue;
+      const glyph = this.contentEl.ownerDocument.createElement("span");
+      glyph.className = `nmp-fastread-glyph is-${data.kind}`;
+      glyph.textContent = data.text;
+      glyph.style.left = `${data.left}px`;
+      glyph.style.top = `${data.top}px`;
+      glyph.style.height = `${data.height}px`;
+      glyph.style.color = data.color;
+      glyph.style.backgroundColor = data.backgroundColor;
+      glyph.style.fontFamily = data.fontFamily;
+      glyph.style.fontSize = data.fontSize;
+      glyph.style.fontWeight = data.kind === "highlight"
+        ? String(this.plugin.settings.fastReadFontWeight)
+        : data.fontWeight;
+      glyph.style.fontStyle = data.fontStyle;
+      glyph.style.fontVariant = data.fontVariant;
+      glyph.style.fontStretch = data.fontStretch;
+      glyph.style.fontFeatureSettings = data.fontFeatureSettings;
+      glyph.style.fontKerning = data.fontKerning;
+      glyph.style.letterSpacing = data.letterSpacing;
+      glyph.style.lineHeight = `${data.height}px`;
+      fragment.appendChild(glyph);
     }
-
-    let decoratedWords = 0;
-    let cursor = 0;
-    const generation = this.fastReadDrawGeneration;
-    const drawBatch = (): void => {
-      if (this.destroyed || generation !== this.fastReadDrawGeneration) return;
-      const deadline = performance.now() + 8;
-      const fragment = this.contentEl.ownerDocument.createDocumentFragment();
-      while (cursor < jobs.length && performance.now() < deadline) {
-        const job = jobs[cursor++];
-        if (!job) break;
-        const { textNode, parent, match } = job;
-        const style = styleCache.get(parent) ?? getComputedStyle(parent);
-        styleCache.set(parent, style);
-        const highlightRange = this.contentEl.ownerDocument.createRange();
-        highlightRange.setStart(textNode, match.start);
-        highlightRange.setEnd(textNode, match.highlightEnd);
-        const highlightRect = Array.from(highlightRange.getClientRects()).find(intersectsStage);
-        if (!highlightRect) continue;
-
-        const createGlyph = (
-          rect: DOMRect,
-          text: string,
-          weight: string,
-          fontStyle: string,
-          color: string,
-          backgroundColor: string,
-          kind: "highlight" | "rest",
-        ): HTMLElement => {
-          const glyph = this.contentEl.ownerDocument.createElement("span");
-          glyph.className = `nmp-fastread-glyph is-${kind}`;
-          glyph.textContent = text;
-          glyph.style.left = `${rect.left - stageRect.left}px`;
-          glyph.style.top = `${rect.top - stageRect.top}px`;
-          glyph.style.height = `${rect.height}px`;
-          glyph.style.color = color;
-          glyph.style.backgroundColor = backgroundColor;
-          glyph.style.fontFamily = style.fontFamily;
-          glyph.style.fontSize = style.fontSize;
-          glyph.style.fontWeight = weight;
-          glyph.style.fontStyle = fontStyle;
-          glyph.style.fontVariant = style.fontVariant;
-          glyph.style.fontStretch = style.fontStretch;
-          glyph.style.fontFeatureSettings = style.fontFeatureSettings;
-          glyph.style.fontKerning = style.fontKerning;
-          glyph.style.letterSpacing = style.letterSpacing;
-          glyph.style.lineHeight = `${rect.height}px`;
-          return glyph;
-        };
-        fragment.appendChild(createGlyph(
-          highlightRect,
-          match.split.highlight,
-          String(settings.fastReadFontWeight),
-          "normal",
-          style.color,
-          "transparent",
-          "highlight",
-        ));
-        if (settings.fastReadDimRest && match.split.rest) {
-          const restRange = this.contentEl.ownerDocument.createRange();
-          restRange.setStart(textNode, match.highlightEnd);
-          restRange.setEnd(textNode, match.end);
-          const restRect = Array.from(restRange.getClientRects()).find(intersectsStage);
-          if (restRect) {
-            fragment.appendChild(createGlyph(
-              restRect,
-              match.split.rest,
-              style.fontWeight,
-              style.fontStyle,
-              `color-mix(in srgb, ${style.color} 70%, ${background})`,
-              background,
-              "rest",
-            ));
-          }
-        }
-        decoratedWords++;
-      }
-      overlay.appendChild(fragment);
-      overlay.hidden = false;
-      this.contentEl.dataset.fastreadWords = String(decoratedWords);
-      if (cursor < jobs.length) {
-        this.fastReadDrawTimer = window.setTimeout(() => {
-          this.fastReadDrawTimer = null;
-          drawBatch();
-        }, 0);
-      }
-    };
-    drawBatch();
+    overlay.replaceChildren(fragment);
+    overlay.hidden = false;
+    this.contentEl.dataset.fastreadWords = String(page.decoratedWords);
   }
 
   private applyTransform(extra = 0): void {
@@ -835,6 +933,8 @@ class PaginationSession {
     if (this.measureTimer !== null) window.clearTimeout(this.measureTimer);
     if (this.persistTimer !== null) window.clearTimeout(this.persistTimer);
     if (this.fastReadDrawTimer !== null) window.clearTimeout(this.fastReadDrawTimer);
+    if (this.fastReadBuildTimer !== null) window.clearTimeout(this.fastReadBuildTimer);
+    this.fastReadBuildGeneration++;
     this.resizeObserver.disconnect();
     this.mutationObserver.disconnect();
     for (const cleanup of this.cleanupCallbacks.splice(0)) cleanup();
