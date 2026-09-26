@@ -6,7 +6,7 @@ const production = process.argv[2] === "production";
 
 const context = await esbuild.context({
   banner: {
-    js: "/* Generated from https://github.com/amymiller76717-sudo/obsidian-native-paginator */",
+    js: "/* Generated from https://github.com/Rowan-memoedu/obsidian-native-paginator */",
   },
   entryPoints: ["src/main.ts"],
   bundle: true,
