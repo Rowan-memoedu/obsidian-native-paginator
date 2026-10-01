@@ -25,6 +25,8 @@ import {
   parseFastReadAlgorithm,
   withFastReadRestRatio,
 } from "./fastread";
+import { moveReadingFileState } from "./file-state";
+import { scheduleCooperativeTask } from "./scheduler";
 
 type PageTint = "none" | "sepia" | "cream" | "gray" | "night";
 
@@ -151,10 +153,12 @@ class PaginationSession {
   private renderChild: Component | null = null;
   private renderGeneration = 0;
   private measureTimer: number | null = null;
+  private measureCancel: (() => void) | null = null;
   private persistTimer: number | null = null;
   private fastReadDrawTimer: number | null = null;
+  private fastReadDrawCancel: (() => void) | null = null;
   private fastReadDrawGeneration = 0;
-  private fastReadBuildTimer: number | null = null;
+  private fastReadBuildCancel: (() => void) | null = null;
   private fastReadBuildGeneration = 0;
   private fastReadTextJobs: FastReadTextJob[] = [];
   private fastReadPages: FastReadPage[] = [];
@@ -275,6 +279,11 @@ class PaginationSession {
     this.listen(viewport, "wheel", (event) => this.onWheel(event as WheelEvent), { passive: false });
     this.listen(viewport, "click", (event) => this.onViewportClick(event as MouseEvent));
     this.listen(document, "keydown", (event) => this.onKeyDown(event as KeyboardEvent));
+    this.listen(this.contentEl.ownerDocument, "visibilitychange", () => {
+      if (this.contentEl.ownerDocument.visibilityState !== "hidden") return;
+      if (!this.measured) this.scheduleMeasure();
+      else this.scheduleFastReadOverlay(0);
+    });
     this.setupScrub();
 
     this.resizeObserver = new ResizeObserver(() => this.scheduleMeasure());
@@ -358,9 +367,14 @@ class PaginationSession {
       if (!image.complete) this.listen(image, "load", () => this.scheduleMeasure(), { once: true });
     });
 
-    window.requestAnimationFrame(() => {
+    const measureRendered = (): void => {
       if (!this.destroyed && generation === this.renderGeneration) this.measure(position);
-    });
+    };
+    if (this.contentEl.ownerDocument.visibilityState === "hidden") {
+      scheduleCooperativeTask(measureRendered);
+    } else {
+      window.requestAnimationFrame(measureRendered);
+    }
   }
 
   private savedFraction(): number {
@@ -524,6 +538,16 @@ class PaginationSession {
   private scheduleMeasure(): void {
     if (this.destroyed) return;
     if (this.measureTimer !== null) window.clearTimeout(this.measureTimer);
+    this.measureCancel?.();
+    this.measureCancel = null;
+    if (this.contentEl.ownerDocument.visibilityState === "hidden") {
+      this.measureTimer = null;
+      this.measureCancel = scheduleCooperativeTask(() => {
+        this.measureCancel = null;
+        this.measure();
+      });
+      return;
+    }
     this.measureTimer = window.setTimeout(() => {
       this.measureTimer = null;
       window.requestAnimationFrame(() => this.measure());
@@ -578,6 +602,8 @@ class PaginationSession {
   private clearFastReadOverlay(): void {
     if (this.fastReadDrawTimer !== null) window.clearTimeout(this.fastReadDrawTimer);
     this.fastReadDrawTimer = null;
+    this.fastReadDrawCancel?.();
+    this.fastReadDrawCancel = null;
     this.fastReadDrawGeneration++;
     this.fastReadOverlayEl.replaceChildren();
     this.fastReadOverlayEl.hidden = true;
@@ -588,12 +614,18 @@ class PaginationSession {
     this.clearFastReadOverlay();
     if (!this.plugin.settings.fastReadEnabled || !this.measured || this.destroyed) return;
     const generation = this.fastReadDrawGeneration;
-    this.fastReadDrawTimer = window.setTimeout(() => {
+    const draw = (): void => {
       this.fastReadDrawTimer = null;
+      this.fastReadDrawCancel = null;
       if (!this.destroyed && generation === this.fastReadDrawGeneration) {
         this.drawFastReadOverlay();
       }
-    }, delay);
+    };
+    if (delay <= 0 || this.contentEl.ownerDocument.visibilityState === "hidden") {
+      this.fastReadDrawCancel = scheduleCooperativeTask(draw);
+    } else {
+      this.fastReadDrawTimer = window.setTimeout(draw, delay);
+    }
   }
 
   private rebuildFastReadTextJobs(): void {
@@ -615,8 +647,8 @@ class PaginationSession {
   }
 
   private rebuildFastReadPages(): void {
-    if (this.fastReadBuildTimer !== null) window.clearTimeout(this.fastReadBuildTimer);
-    this.fastReadBuildTimer = null;
+    this.fastReadBuildCancel?.();
+    this.fastReadBuildCancel = null;
     const generation = ++this.fastReadBuildGeneration;
     this.fastReadPages = [];
     this.fastReadPagesReady = false;
@@ -726,16 +758,18 @@ class PaginationSession {
         page.decoratedWords++;
       }
       if (cursor < jobs.length) {
-        this.fastReadBuildTimer = window.setTimeout(() => {
-          this.fastReadBuildTimer = null;
+        this.fastReadBuildCancel = scheduleCooperativeTask(() => {
+          this.fastReadBuildCancel = null;
           buildBatch();
-        }, 0);
+        });
         return;
       }
       if (this.destroyed || generation !== this.fastReadBuildGeneration) return;
       this.fastReadPages = pages;
       this.fastReadPagesReady = true;
-      if (this.fastReadDrawTimer === null) this.scheduleFastReadOverlay(0);
+      if (this.fastReadDrawTimer === null && this.fastReadDrawCancel === null) {
+        this.scheduleFastReadOverlay(0);
+      }
     };
     buildBatch();
   }
@@ -931,9 +965,11 @@ class PaginationSession {
     this.destroyed = true;
     this.renderGeneration++;
     if (this.measureTimer !== null) window.clearTimeout(this.measureTimer);
+    this.measureCancel?.();
     if (this.persistTimer !== null) window.clearTimeout(this.persistTimer);
     if (this.fastReadDrawTimer !== null) window.clearTimeout(this.fastReadDrawTimer);
-    if (this.fastReadBuildTimer !== null) window.clearTimeout(this.fastReadBuildTimer);
+    this.fastReadDrawCancel?.();
+    this.fastReadBuildCancel?.();
     this.fastReadBuildGeneration++;
     this.resizeObserver.disconnect();
     this.mutationObserver.disconnect();
@@ -978,6 +1014,10 @@ export default class NativeMarkdownPaginatorPlugin extends Plugin {
       for (const session of this.sessions.values()) {
         if (session.filePath === file.path) session.reload();
       }
+    }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (moveReadingFileState(this.settings, oldPath, file.path)) this.queueSave();
+      this.scheduleSync();
     }));
     this.registerDomEvent(window, "resize", () => this.scheduleSync());
     this.app.workspace.onLayoutReady(() => {

@@ -12,6 +12,7 @@ also includes an optional Fastread-style visual anchor layer for English words.
 - Turns pages with `translateX(page * stride)`, arrow buttons, mouse wheel,
   keyboard shortcuts, edge clicks, or the draggable progress bar.
 - Preserves reading position as a fraction when page geometry changes.
+- Preserves per-note reading activation and progress when notes or folders move.
 - Applies only to explicitly enabled Markdown notes in Reading View.
 - Never collapses sidebars or adds an immersive app-wide state.
 - Uses `STSong, 华文宋体, SimSun, serif` and sepia paper by default.
@@ -37,6 +38,8 @@ algorithm, intensity preset (`0`, `0.35`, `0.4`, `0.45`, or `0.5`), common-word 
 rest dimming, emphasis weight, and page-turn switches are all available there without
 opening Obsidian settings. On first load or after a layout change, Fastread caches the
 word splits and precomputes every page's visual layer in short, non-blocking batches.
+Batch scheduling uses message tasks so background-window timer throttling cannot
+leave visual anchors waiting indefinitely.
 Page turns then swap only the already prepared current-page glyphs, so they do not
 rerun the word algorithm or measure text positions and never expose a partly drawn
 layer. The full document is never split into thousands of inline DOM nodes. The
