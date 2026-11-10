@@ -1,5 +1,8 @@
 # Obsidian Native Paginator
 
+协作开发、Agent 提交与合并规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+
 MD Reader-style horizontal book pagination embedded inside Obsidian's existing
 `MarkdownView`. It keeps the note recognizable as a normal Markdown view so sidebar
 tools such as Voice Reader can remain open and resolve the current file/editor. It
